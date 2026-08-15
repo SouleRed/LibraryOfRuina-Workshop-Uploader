@@ -1,0 +1,19 @@
+# IDE and user state
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+SteamworkUploader.sln
+*.code-workspace
+
+# Build and package output
+[Bb]in/
+[Oo]bj/
+packages/
+TestResults/
+*.pdb
+FodyWeavers.xsd
+
+# Local logs and settings
+*.log
