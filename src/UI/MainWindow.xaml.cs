@@ -1,11 +1,14 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using SteamworkUploader.Models;
 using SteamworkUploader.Services;
+using Forms = System.Windows.Forms;
 using Rectangle = System.Windows.Shapes.Rectangle;
 
 namespace SteamworkUploader;
@@ -14,6 +17,11 @@ public partial class MainWindow : Window
 {
     private const uint SteamAppId = 1256670;
     private const int UploadProgressSegmentCount = 24;
+    private const double IdealWindowWidth = 940;
+    private const double IdealWindowHeight = 850;
+    private const double WorkAreaMargin = 32;
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
 
     private readonly SteamSession _steamSession = new();
     private readonly WorkshopUploadService _uploadService = new();
@@ -44,6 +52,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        InitializeScaledContent();
+        WindowStartupLocation = WindowStartupLocation.Manual;
         _settings = _settingsService.Load();
 
         LocalizationService.LanguageChanged += LocalizationService_LanguageChanged;
@@ -59,6 +69,7 @@ public partial class MainWindow : Window
         DescriptionTextBox.TextChanged += UploadInput_TextChanged;
         ChangeLogTextBox.TextChanged += UploadInput_TextChanged;
 
+        SourceInitialized += MainWindow_SourceInitialized;
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         _steamSession.DiagnosticReceived += SteamSession_DiagnosticReceived;
@@ -66,9 +77,71 @@ public partial class MainWindow : Window
 
     private bool IsBusy => _isUploading || _isFetchingWorkshop;
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(
+        IntPtr hWnd,
+        IntPtr hWndInsertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags);
+
+    private void InitializeScaledContent()
+    {
+        if (Content is not FrameworkElement designRoot)
+            return;
+
+        Content = null;
+        designRoot.Width = IdealWindowWidth;
+        designRoot.Height = IdealWindowHeight;
+        designRoot.HorizontalAlignment = HorizontalAlignment.Center;
+        designRoot.VerticalAlignment = VerticalAlignment.Center;
+
+        Content = new Viewbox
+        {
+            Stretch = Stretch.Uniform,
+            StretchDirection = StretchDirection.DownOnly,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Child = designRoot
+        };
+    }
+
+    private void MainWindow_SourceInitialized(object? sender, EventArgs e) => ApplyScaledWindowBounds();
+
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         InitializeSteam();
+    }
+
+    private void ApplyScaledWindowBounds()
+    {
+        IntPtr handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero)
+            return;
+
+        Forms.Screen screen = Forms.Screen.FromPoint(Forms.Cursor.Position);
+        DpiScale dpi = VisualTreeHelper.GetDpi(this);
+        double workingWidth = screen.WorkingArea.Width / dpi.DpiScaleX;
+        double workingHeight = screen.WorkingArea.Height / dpi.DpiScaleY;
+        double availableWidth = Math.Max(1, workingWidth - WorkAreaMargin);
+        double availableHeight = Math.Max(1, workingHeight - WorkAreaMargin);
+        double scale = Math.Min(1, Math.Min(availableWidth / IdealWindowWidth, availableHeight / IdealWindowHeight));
+        double targetWidth = IdealWindowWidth * scale;
+        double targetHeight = IdealWindowHeight * scale;
+
+        MinWidth = targetWidth;
+        MinHeight = targetHeight;
+        Width = targetWidth;
+        Height = targetHeight;
+
+        int widthPixels = (int)Math.Round(targetWidth * dpi.DpiScaleX);
+        int heightPixels = (int)Math.Round(targetHeight * dpi.DpiScaleY);
+        int left = screen.WorkingArea.Left + Math.Max(0, (screen.WorkingArea.Width - widthPixels) / 2);
+        int top = screen.WorkingArea.Top + Math.Max(0, (screen.WorkingArea.Height - heightPixels) / 2);
+
+        SetWindowPos(handle, IntPtr.Zero, left, top, widthPixels, heightPixels, SwpNoZOrder | SwpNoActivate);
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
